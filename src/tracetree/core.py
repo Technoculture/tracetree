@@ -8,13 +8,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-
 REQ_RE = re.compile(r"^(REQ-[A-Z0-9-]+):")
 RC_RE = re.compile(r"^(RC-[A-Z0-9-]+):")
-GTEST_RE = re.compile(
-    r"TEST(?:_F)?\s*\(\s*([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s*\)"
-)
+GTEST_RE = re.compile(r"TEST(?:_F)?\s*\(\s*([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s*\)")
 PYTEST_RE = re.compile(r"^\s*def\s+(test_[A-Za-z0-9_]+)\s*\(")
+JS_TEST_RE = re.compile(r"\b(?:test|it)\s*(?:\.\w+)?\s*\(\s*([\"'`])(.+?)\1")
+RUST_TEST_ATTR_RE = re.compile(r"^\s*#\[\s*([A-Za-z0-9_:]+::)?test")
+RUST_FN_RE = re.compile(r"^\s*(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(")
 
 
 @dataclass
@@ -26,6 +26,8 @@ class TraceConfig:
     matrix: Path
     gtest_roots: list[Path]
     pytest_roots: list[Path]
+    js_roots: list[Path]
+    rust_roots: list[Path]
 
 
 def load_config(repo_root: Path) -> TraceConfig:
@@ -52,11 +54,16 @@ def load_config(repo_root: Path) -> TraceConfig:
     risk_controls = resolve_trace_path("risk_controls_file", "risk_controls.md")
     matrix = resolve_trace_path("matrix_file", "traceability_matrix.csv")
 
-    gtest_roots = [
-        repo_root / p for p in config.get("gtest_roots", ["tests", "test"])
-    ]
+    gtest_roots = [repo_root / p for p in config.get("gtest_roots", ["tests", "test"])]
     pytest_roots = [
         repo_root / p for p in config.get("pytest_roots", ["tests", "test"])
+    ]
+    js_roots = [
+        repo_root / p
+        for p in config.get("js_roots", ["tests", "test", "__tests__", "spec"])
+    ]
+    rust_roots = [
+        repo_root / p for p in config.get("rust_roots", ["tests", "test", "src"])
     ]
 
     return TraceConfig(
@@ -67,6 +74,8 @@ def load_config(repo_root: Path) -> TraceConfig:
         matrix=matrix,
         gtest_roots=gtest_roots,
         pytest_roots=pytest_roots,
+        js_roots=js_roots,
+        rust_roots=rust_roots,
     )
 
 
@@ -92,9 +101,26 @@ def parse_matrix(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def read_text_lines(path: Path) -> list[str]:
+    try:
+        return path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8", errors="ignore").splitlines()
+
+
 def validate_repo(config: TraceConfig, coverage_threshold: float) -> dict:
     errors: list[str] = []
     warnings: list[str] = []
+
+    if (
+        not config.requirements.exists()
+        and not config.risk_controls.exists()
+        and not config.matrix.exists()
+    ):
+        errors.append(
+            "Traceability not initialized. Run `tracetree init` or create files in "
+            f"{config.trace_dir}."
+        )
 
     requirements = load_ids(config.requirements, REQ_RE)
     risk_controls = load_ids(config.risk_controls, RC_RE)
@@ -143,9 +169,7 @@ def validate_repo(config: TraceConfig, coverage_threshold: float) -> dict:
     if missing_reqs:
         errors.append("Requirements missing from matrix: " + ", ".join(missing_reqs))
 
-    coverage_ratio = (
-        len(referenced_reqs) / len(requirements) if requirements else 0.0
-    )
+    coverage_ratio = len(referenced_reqs) / len(requirements) if requirements else 0.0
     if coverage_ratio < coverage_threshold:
         errors.append(
             f"Requirements coverage {coverage_ratio:.2%} below threshold "
@@ -175,7 +199,7 @@ def index_gtest_tests(config: TraceConfig) -> dict[str, tuple[str, int]]:
         for path in root.rglob("*"):
             if path.suffix not in exts:
                 continue
-            for idx, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for idx, line in enumerate(read_text_lines(path), 1):
                 match = GTEST_RE.search(line)
                 if match:
                     name = f"{match.group(1)}.{match.group(2)}"
@@ -190,7 +214,7 @@ def index_pytest_tests(config: TraceConfig) -> dict[str, tuple[str, int]]:
         if not root.exists():
             continue
         for path in root.rglob("*.py"):
-            for idx, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for idx, line in enumerate(read_text_lines(path), 1):
                 match = PYTEST_RE.match(line)
                 if match:
                     name = match.group(1)
@@ -199,10 +223,53 @@ def index_pytest_tests(config: TraceConfig) -> dict[str, tuple[str, int]]:
     return index
 
 
+def index_js_tests(config: TraceConfig) -> dict[str, tuple[str, int]]:
+    index: dict[str, tuple[str, int]] = {}
+    exts = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
+    for root in config.js_roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if path.suffix not in exts:
+                continue
+            rel = str(path.relative_to(config.repo_root))
+            for idx, line in enumerate(read_text_lines(path), 1):
+                match = JS_TEST_RE.search(line) or DENO_TEST_RE.search(line)
+                if match:
+                    name = match.group(2)
+                    index.setdefault(name, (rel, idx))
+    return index
+
+
+def index_rust_tests(config: TraceConfig) -> dict[str, tuple[str, int]]:
+    index: dict[str, tuple[str, int]] = {}
+    for root in config.rust_roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*.rs"):
+            rel = str(path.relative_to(config.repo_root))
+            pending_test = False
+            for idx, line in enumerate(read_text_lines(path), 1):
+                if RUST_TEST_ATTR_RE.match(line):
+                    pending_test = True
+                    continue
+                if pending_test:
+                    match = RUST_FN_RE.match(line)
+                    if match:
+                        name = match.group(1)
+                        index.setdefault(name, (rel, idx))
+                        pending_test = False
+                    elif line.strip() and not line.strip().startswith("#"):
+                        pending_test = False
+    return index
+
+
 def link_test_ids(config: TraceConfig) -> dict:
     rows = parse_matrix(config.matrix)
     gtest_index = index_gtest_tests(config)
     pytest_index = index_pytest_tests(config)
+    js_index = index_js_tests(config)
+    rust_index = index_rust_tests(config)
 
     links = []
     unresolved = 0
@@ -229,6 +296,24 @@ def link_test_ids(config: TraceConfig) -> dict:
             )
         elif test_id in pytest_index:
             resolved_path, line = pytest_index[test_id]
+            link.update(
+                {
+                    "resolved": True,
+                    "resolved_location": resolved_path,
+                    "resolved_line": line,
+                }
+            )
+        elif test_id in js_index:
+            resolved_path, line = js_index[test_id]
+            link.update(
+                {
+                    "resolved": True,
+                    "resolved_location": resolved_path,
+                    "resolved_line": line,
+                }
+            )
+        elif test_id in rust_index:
+            resolved_path, line = rust_index[test_id]
             link.update(
                 {
                     "resolved": True,
@@ -272,14 +357,18 @@ def write_validate_report(config: TraceConfig, report: dict) -> None:
                 f"- Coverage threshold: {report['coverage_threshold']:.2%}",
                 "",
                 "## Errors",
-                "\n".join(f"- {err}" for err in report["errors"])
-                if report["errors"]
-                else "- None",
+                (
+                    "\n".join(f"- {err}" for err in report["errors"])
+                    if report["errors"]
+                    else "- None"
+                ),
                 "",
                 "## Warnings",
-                "\n".join(f"- {warn}" for warn in report["warnings"])
-                if report["warnings"]
-                else "- None",
+                (
+                    "\n".join(f"- {warn}" for warn in report["warnings"])
+                    if report["warnings"]
+                    else "- None"
+                ),
                 "",
             ]
         ),
@@ -398,9 +487,7 @@ def write_aggregate_report(trace_dir: Path, aggregate: dict) -> None:
 
     for entry in aggregate["results"]:
         if entry.get("status") in ("skipped", "missing"):
-            lines.append(
-                f"| {entry['repo']} | {entry['status']} | - | - | - | - | - |"
-            )
+            lines.append(f"| {entry['repo']} | {entry['status']} | - | - | - | - | - |")
             continue
         validate = entry["validate"]
         coverage = f"{validate['coverage_ratio']:.2%}"
@@ -414,3 +501,56 @@ def write_aggregate_report(trace_dir: Path, aggregate: dict) -> None:
 
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     json_path.write_text(json.dumps(aggregate, indent=2), encoding="utf-8")
+
+
+def init_traceability(config: TraceConfig) -> dict:
+    created: list[Path] = []
+    skipped: list[Path] = []
+
+    config.trace_dir.mkdir(parents=True, exist_ok=True)
+
+    def ensure_file(path: Path, content: str) -> None:
+        if path.exists():
+            skipped.append(path)
+            return
+        path.write_text(content, encoding="utf-8")
+        created.append(path)
+
+    ensure_file(
+        config.requirements,
+        "\n".join(
+            [
+                "# Requirements",
+                "",
+                "REQ-EXAMPLE-1: Example requirement description.",
+                "",
+            ]
+        ),
+    )
+    ensure_file(
+        config.risk_controls,
+        "\n".join(
+            [
+                "# Risk Controls",
+                "",
+                "RC-EXAMPLE-1: Example risk control description.",
+                "",
+            ]
+        ),
+    )
+    ensure_file(
+        config.matrix,
+        "\n".join(
+            [
+                "RequirementID,RiskControlID,TestID,TestLocation,Notes",
+                "REQ-EXAMPLE-1,RC-EXAMPLE-1,example_test,,TODO: add test coverage",
+                "",
+            ]
+        ),
+    )
+
+    return {
+        "trace_dir": str(config.trace_dir),
+        "created": [str(path) for path in created],
+        "skipped": [str(path) for path in skipped],
+    }

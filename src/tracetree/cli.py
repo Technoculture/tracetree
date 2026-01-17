@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from pathlib import Path
 
 from .core import (
     aggregate_reports,
+    init_traceability,
     link_test_ids,
     load_config,
     validate_repo,
@@ -47,13 +47,29 @@ def run_aggregate(args: argparse.Namespace) -> int:
     aggregate = aggregate_reports(repo_root, args.coverage_threshold)
     config = load_config(repo_root)
     write_aggregate_report(config.trace_dir, aggregate)
-    failed = any(
-        entry.get("status") == "failed" for entry in aggregate["results"]
-    )
+    failed = any(entry.get("status") == "failed" for entry in aggregate["results"])
     if failed:
         print("Traceability rollup failed.")
         return 1
     print("Traceability rollup complete.")
+    return 0
+
+
+def run_init(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    config = load_config(repo_root)
+    report = init_traceability(config)
+    created = report["created"]
+    skipped = report["skipped"]
+    print(f"Initialized traceability in {report['trace_dir']}.")
+    if created:
+        print("Created:")
+        for path in created:
+            print(f"- {path}")
+    if skipped:
+        print("Skipped existing:")
+        for path in skipped:
+            print(f"- {path}")
     return 0
 
 
@@ -82,6 +98,7 @@ def parse_args() -> argparse.Namespace:
     subparsers.add_parser("validate", help="Validate requirements/matrix coverage.")
     subparsers.add_parser("link", help="Link TestIDs to test definitions.")
     subparsers.add_parser("aggregate", help="Aggregate across submodules.")
+    subparsers.add_parser("init", help="Create starter traceability files.")
 
     return parser.parse_args()
 
@@ -94,6 +111,8 @@ def main() -> int:
         return run_link(args)
     if args.command == "aggregate":
         return run_aggregate(args)
+    if args.command == "init":
+        return run_init(args)
     return 1
 
 

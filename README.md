@@ -11,6 +11,7 @@ pip install tracetree
 ## Quick Start
 From a repo root with `docs/traceability/`:
 ```bash
+tracetree init
 tracetree validate
 tracetree link
 tracetree aggregate
@@ -21,9 +22,22 @@ tracetree aggregate
 - `docs/traceability/risk_controls.md`
 - `docs/traceability/traceability_matrix.csv`
 
+If you do not already have these files, run:
+```bash
+tracetree init
+```
+
 Test discovery defaults:
 - GTest: `tests/`, `test/`
 - Pytest: `tests/`, `test/`
+- JS/TS (Jest/Mocha/Vitest/Deno): `tests/`, `test/`, `__tests__/`, `spec/`
+- Rust (`#[test]`): `tests/`, `test/`, `src/`
+
+TestID matching:
+- GTest: `SuiteName.TestName`
+- Pytest: `test_function_name`
+- JS/TS: string in `test("name", ...)` or `it("name", ...)` (also `Deno.test("name", ...)`)
+- Rust: function name following `#[test]`
 
 ## Repo Configuration
 Create `.traceability/config.json` to override defaults:
@@ -34,7 +48,9 @@ Create `.traceability/config.json` to override defaults:
   "risk_controls_file": "risk_controls.md",
   "matrix_file": "traceability_matrix.csv",
   "gtest_roots": ["tests"],
-  "pytest_roots": ["bindings/python/tests"]
+  "pytest_roots": ["bindings/python/tests"],
+  "js_roots": ["packages/web/tests"],
+  "rust_roots": ["crates/core/tests", "crates/core/src"]
 }
 ```
 
