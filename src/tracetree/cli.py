@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import argparse
 import os
 from pathlib import Path
+
+import typer
 
 from tracetree.core import (
     aggregate_reports,
@@ -17,106 +18,105 @@ from tracetree.core import (
 )
 
 
-def run_validate(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo).resolve()
+def coverage_default() -> float:
+    return float(
+        os.environ.get("TRACEABILITY_REQ_COVERAGE")
+        or os.environ.get("DATA_BRIDGE_REQ_COVERAGE")
+        or "1.0"
+    )
+
+
+app = typer.Typer(help="Universal traceability tooling (validate/link/aggregate).")
+
+
+@app.command("validate")
+def run_validate(
+    repo: str = typer.Option(
+        ".", "--repo", help="Repository root (defaults to current working directory)."
+    ),
+    coverage_threshold: float = typer.Option(
+        coverage_default(),
+        "--coverage-threshold",
+        help="Minimum requirements coverage ratio (0-1).",
+    ),
+) -> None:
+    repo_root = Path(repo).resolve()
     config = load_config(repo_root)
-    report = validate_repo(config, args.coverage_threshold)
+    report = validate_repo(config, coverage_threshold)
     write_validate_report(config, report)
     write_iec62304_report(config)
     if report["errors"]:
-        print("Traceability validation failed.")
+        typer.echo("Traceability validation failed.")
         for err in report["errors"]:
-            print(f"- {err}")
-        return 1
-    print("Traceability validation passed.")
+            typer.echo(f"- {err}")
+        raise typer.Exit(code=1)
+    typer.echo("Traceability validation passed.")
     if report["warnings"]:
         for warn in report["warnings"]:
-            print(f"- {warn}")
-    return 0
+            typer.echo(f"- {warn}")
 
 
-def run_link(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo).resolve()
+@app.command("link")
+def run_link(
+    repo: str = typer.Option(
+        ".", "--repo", help="Repository root (defaults to current working directory)."
+    ),
+) -> None:
+    repo_root = Path(repo).resolve()
     config = load_config(repo_root)
     report = link_test_ids(config)
     write_link_report(config, report)
-    print("TestID linking complete.")
-    return 0
+    typer.echo("TestID linking complete.")
 
 
-def run_aggregate(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo).resolve()
-    aggregate = aggregate_reports(repo_root, args.coverage_threshold)
+@app.command("aggregate")
+def run_aggregate(
+    repo: str = typer.Option(
+        ".", "--repo", help="Repository root (defaults to current working directory)."
+    ),
+    coverage_threshold: float = typer.Option(
+        coverage_default(),
+        "--coverage-threshold",
+        help="Minimum requirements coverage ratio (0-1).",
+    ),
+) -> None:
+    repo_root = Path(repo).resolve()
+    aggregate = aggregate_reports(repo_root, coverage_threshold)
     config = load_config(repo_root)
     write_aggregate_report(config.output_dir, aggregate)
     failed = any(entry.get("status") == "failed" for entry in aggregate["results"])
     if failed:
-        print("Traceability rollup failed.")
-        return 1
-    print("Traceability rollup complete.")
-    return 0
+        typer.echo("Traceability rollup failed.")
+        raise typer.Exit(code=1)
+    typer.echo("Traceability rollup complete.")
 
 
-def run_init(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo).resolve()
+@app.command("init")
+def run_init(
+    repo: str = typer.Option(
+        ".", "--repo", help="Repository root (defaults to current working directory)."
+    ),
+) -> None:
+    repo_root = Path(repo).resolve()
     config = load_config(repo_root)
     report = init_traceability(config)
     created = report["created"]
     skipped = report["skipped"]
-    print(f"Initialized traceability in {report['trace_dir']}.")
-    print(f"Generated reports will be written to {report['output_dir']}.")
+    typer.echo(f"Initialized traceability in {report['trace_dir']}.")
+    typer.echo(f"Generated reports will be written to {report['output_dir']}.")
     if created:
-        print("Created:")
+        typer.echo("Created:")
         for path in created:
-            print(f"- {path}")
+            typer.echo(f"- {path}")
     if skipped:
-        print("Skipped existing:")
+        typer.echo("Skipped existing:")
         for path in skipped:
-            print(f"- {path}")
-    return 0
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Universal traceability tooling (validate/link/aggregate)."
-    )
-    parser.add_argument(
-        "--repo",
-        default=".",
-        help="Repository root (defaults to current working directory).",
-    )
-    parser.add_argument(
-        "--coverage-threshold",
-        type=float,
-        default=float(
-            os.environ.get("TRACEABILITY_REQ_COVERAGE")
-            or os.environ.get("DATA_BRIDGE_REQ_COVERAGE")
-            or "1.0"
-        ),
-        help="Minimum requirements coverage ratio (0-1).",
-    )
-
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    subparsers.add_parser("validate", help="Validate requirements/matrix coverage.")
-    subparsers.add_parser("link", help="Link TestIDs to test definitions.")
-    subparsers.add_parser("aggregate", help="Aggregate across submodules.")
-    subparsers.add_parser("init", help="Create starter traceability files.")
-
-    return parser.parse_args()
+            typer.echo(f"- {path}")
 
 
 def main() -> int:
-    args = parse_args()
-    if args.command == "validate":
-        return run_validate(args)
-    if args.command == "link":
-        return run_link(args)
-    if args.command == "aggregate":
-        return run_aggregate(args)
-    if args.command == "init":
-        return run_init(args)
-    return 1
+    app()
+    return 0
 
 
 if __name__ == "__main__":
