@@ -21,6 +21,7 @@ RUST_FN_RE = re.compile(r"^\s*(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(")
 class TraceConfig:
     repo_root: Path
     trace_dir: Path
+    output_dir: Path
     requirements: Path
     risk_controls: Path
     matrix: Path
@@ -42,6 +43,9 @@ def load_config(repo_root: Path) -> TraceConfig:
         config = json.loads(config_file.read_text(encoding="utf-8"))
 
     trace_dir = repo_root / config.get("traceability_dir", "docs/traceability")
+    output_dir = repo_root / config.get(
+        "traceability_output_dir", "docs/traceability/generated"
+    )
 
     def resolve_trace_path(key: str, default_name: str) -> Path:
         value = config.get(key, default_name)
@@ -69,6 +73,7 @@ def load_config(repo_root: Path) -> TraceConfig:
     return TraceConfig(
         repo_root=repo_root,
         trace_dir=trace_dir,
+        output_dir=output_dir,
         requirements=requirements,
         risk_controls=risk_controls,
         matrix=matrix,
@@ -338,9 +343,9 @@ def link_test_ids(config: TraceConfig) -> dict:
 
 
 def write_validate_report(config: TraceConfig, report: dict) -> None:
-    config.trace_dir.mkdir(parents=True, exist_ok=True)
-    md_path = config.trace_dir / "traceability_report.md"
-    json_path = config.trace_dir / "traceability_report.json"
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    md_path = config.output_dir / "traceability_report.md"
+    json_path = config.output_dir / "traceability_report.json"
 
     md_path.write_text(
         "\n".join(
@@ -378,9 +383,9 @@ def write_validate_report(config: TraceConfig, report: dict) -> None:
 
 
 def write_link_report(config: TraceConfig, report: dict) -> None:
-    config.trace_dir.mkdir(parents=True, exist_ok=True)
-    md_path = config.trace_dir / "testid_links.md"
-    json_path = config.trace_dir / "testid_links.json"
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    md_path = config.output_dir / "testid_links.md"
+    json_path = config.output_dir / "testid_links.json"
 
     lines = [
         "# TestID Link Report",
@@ -469,8 +474,8 @@ def aggregate_reports(repo_root: Path, coverage_threshold: float) -> dict:
     }
 
 
-def write_aggregate_report(trace_dir: Path, aggregate: dict) -> None:
-    out_dir = trace_dir / "aggregate"
+def write_aggregate_report(output_dir: Path, aggregate: dict) -> None:
+    out_dir = output_dir / "aggregate"
     out_dir.mkdir(parents=True, exist_ok=True)
     md_path = out_dir / "traceability_rollup.md"
     json_path = out_dir / "traceability_rollup.json"
@@ -548,9 +553,23 @@ def init_traceability(config: TraceConfig) -> dict:
             ]
         ),
     )
+    ensure_file(
+        config.trace_dir / "soup_inventory.md",
+        "\n".join(
+            [
+                "# SOUP Inventory",
+                "| SOUP ID | Component | Version | Source | Function | Safety Impact | "
+                "Rationale | Controls | Evidence |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+                "| SOUP-001 | Example Component | | | | | | | |",
+                "",
+            ]
+        ),
+    )
 
     return {
         "trace_dir": str(config.trace_dir),
+        "output_dir": str(config.output_dir),
         "created": [str(path) for path in created],
         "skipped": [str(path) for path in skipped],
     }

@@ -46,7 +46,7 @@ def run_aggregate(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo).resolve()
     aggregate = aggregate_reports(repo_root, args.coverage_threshold)
     config = load_config(repo_root)
-    write_aggregate_report(config.trace_dir, aggregate)
+    write_aggregate_report(config.output_dir, aggregate)
     failed = any(entry.get("status") == "failed" for entry in aggregate["results"])
     if failed:
         print("Traceability rollup failed.")
@@ -62,6 +62,7 @@ def run_init(args: argparse.Namespace) -> int:
     created = report["created"]
     skipped = report["skipped"]
     print(f"Initialized traceability in {report['trace_dir']}.")
+    print(f"Generated reports will be written to {report['output_dir']}.")
     if created:
         print("Created:")
         for path in created:

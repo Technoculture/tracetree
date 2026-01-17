@@ -21,11 +21,20 @@ tracetree aggregate
 - `docs/traceability/requirements.md`
 - `docs/traceability/risk_controls.md`
 - `docs/traceability/traceability_matrix.csv`
+- `docs/traceability/soup_inventory.md`
 
 If you do not already have these files, run:
 ```bash
 tracetree init
 ```
+
+Generated reports (default):
+- `docs/traceability/generated/traceability_report.md`
+- `docs/traceability/generated/traceability_report.json`
+- `docs/traceability/generated/testid_links.md`
+- `docs/traceability/generated/testid_links.json`
+- `docs/traceability/generated/aggregate/traceability_rollup.md`
+- `docs/traceability/generated/aggregate/traceability_rollup.json`
 
 Test discovery defaults:
 - GTest: `tests/`, `test/`
@@ -44,6 +53,7 @@ Create `.traceability/config.json` to override defaults:
 ```json
 {
   "traceability_dir": "docs/traceability",
+  "traceability_output_dir": "docs/traceability/generated",
   "requirements_file": "requirements.md",
   "risk_controls_file": "risk_controls.md",
   "matrix_file": "traceability_matrix.csv",
