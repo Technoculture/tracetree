@@ -4,6 +4,7 @@ import csv
 import json
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -125,6 +126,113 @@ def parse_mapping(path: Path) -> dict[str, dict[str, str]]:
     return mapping
 
 
+def normalize_text(text: str | list[str]) -> str:
+    if isinstance(text, list):
+        text = "\n".join(text)
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip()
+
+
+def traceability_templates(config: TraceConfig) -> dict[Path, str]:
+    return {
+        config.requirements: "\n".join(
+            [
+                "# Requirements",
+                "",
+                "REQ-EXAMPLE-1: Example requirement description.",
+                "",
+            ]
+        ),
+        config.risk_controls: "\n".join(
+            [
+                "# Risk Controls",
+                "",
+                "RC-EXAMPLE-1: Example risk control description.",
+                "",
+            ]
+        ),
+        config.matrix: "\n".join(
+            [
+                "RequirementID,RiskControlID,TestID,TestLocation,Notes",
+                "REQ-EXAMPLE-1,RC-EXAMPLE-1,example_test,,TODO: add test coverage",
+                "",
+            ]
+        ),
+        config.iec62304_mapping: "\n".join(
+            [
+                "RequirementID,SoftwareItem,IntegrationSystemTest,Evidence",
+                "REQ-EXAMPLE-1,Example Module,verify_reliability.py,Test logs",
+                "",
+            ]
+        ),
+        config.trace_dir / "soup_inventory.md": "\n".join(
+            [
+                "# SOUP Inventory",
+                "| SOUP ID | Component | Version | Source | Function | Safety Impact | "
+                "Rationale | Controls | Evidence |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+                "| SOUP-001 | Example Component | | | | | | | |",
+                "",
+            ]
+        ),
+        config.trace_dir / "verification_plan.md": "\n".join(
+            [
+                "# Verification Plan",
+                "",
+                "## Scope",
+                "- Define system/software items covered by verification.",
+                "",
+                "## Strategy",
+                "- Unit tests: ",
+                "- Integration/system tests: ",
+                "- Manual/inspection steps: ",
+                "",
+                "## Entry Criteria",
+                "- ",
+                "",
+                "## Exit Criteria",
+                "- ",
+                "",
+                "## Evidence",
+                "- Link to test reports, logs, and sign-offs.",
+                "",
+            ]
+        ),
+    }
+
+
+def template_warnings(config: TraceConfig) -> list[str]:
+    warnings: list[str] = []
+    for path, content in traceability_templates(config).items():
+        if not path.exists():
+            continue
+        current = normalize_text(read_text_lines(path))
+        template = normalize_text(content)
+        if current == template:
+            warnings.append(f"Template file unchanged: {path}")
+    return warnings
+
+
+def collect_traceability_files(config: TraceConfig) -> dict[str, list[str]]:
+    source_files: list[str] = []
+    generated_files: list[str] = []
+
+    if config.trace_dir.exists():
+        for path in config.trace_dir.rglob("*"):
+            if path.is_dir():
+                continue
+            if config.output_dir.exists() and config.output_dir in path.parents:
+                continue
+            source_files.append(str(path.relative_to(config.repo_root)))
+
+    if config.output_dir.exists():
+        for path in config.output_dir.rglob("*"):
+            if path.is_dir():
+                continue
+            generated_files.append(str(path.relative_to(config.repo_root)))
+
+    return {"source_files": source_files, "generated_files": generated_files}
+
+
 def read_text_lines(path: Path) -> list[str]:
     try:
         return path.read_text(encoding="utf-8").splitlines()
@@ -152,6 +260,8 @@ def validate_repo(config: TraceConfig, coverage_threshold: float) -> dict:
 
     if not config.iec62304_mapping.exists():
         errors.append(f"Missing {config.iec62304_mapping}")
+
+    warnings.extend(template_warnings(config))
 
     if not requirements:
         errors.append(f"No requirements found in {config.requirements}")
@@ -494,13 +604,25 @@ def aggregate_reports(repo_root: Path, coverage_threshold: float) -> dict:
 
     for repo in repos:
         config = load_config(repo)
+        repo_rel = None
+        try:
+            repo_rel = str(Path(repo).relative_to(repo_root))
+        except ValueError:
+            repo_rel = Path(repo).name
         if not repo.exists():
             results.append(
-                {"repo": str(repo), "status": "missing", "errors": ["path missing"]}
+                {
+                    "repo": str(repo),
+                    "repo_rel": repo_rel,
+                    "status": "missing",
+                    "errors": ["path missing"],
+                }
             )
             continue
         if not repo_has_traceability(config):
-            results.append({"repo": str(repo), "status": "skipped"})
+            results.append(
+                {"repo": str(repo), "repo_rel": repo_rel, "status": "skipped"}
+            )
             continue
 
         validate_report = validate_repo(config, coverage_threshold)
@@ -508,13 +630,17 @@ def aggregate_reports(repo_root: Path, coverage_threshold: float) -> dict:
         write_validate_report(config, validate_report)
         write_link_report(config, link_report)
         write_iec62304_report(config)
+        files = collect_traceability_files(config)
 
         status = "ok" if not validate_report["errors"] else "failed"
         results.append(
             {
                 "repo": str(repo),
+                "repo_rel": repo_rel,
                 "status": status,
                 "validate": validate_report,
+                "warnings": validate_report["warnings"],
+                "files": files,
                 "link": {
                     "total": link_report["total"],
                     "resolved": link_report["resolved"],
@@ -543,23 +669,66 @@ def write_aggregate_report(output_dir: Path, aggregate: dict) -> None:
         f"**Coverage Threshold:** {aggregate['coverage_threshold']:.2%}",
         "",
         "## Summary",
-        "| Repo | Status | Requirements | Covered | Coverage | Errors | Unresolved TestIDs |",
-        "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
+        "| Repo | Status | Requirements | Covered | Coverage | Errors | Warnings | Unresolved TestIDs |",
+        "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
     ]
 
     for entry in aggregate["results"]:
         if entry.get("status") in ("skipped", "missing"):
-            lines.append(f"| {entry['repo']} | {entry['status']} | - | - | - | - | - |")
+            lines.append(
+                f"| {entry['repo']} | {entry['status']} | - | - | - | - | - | - |"
+            )
             continue
         validate = entry["validate"]
         coverage = f"{validate['coverage_ratio']:.2%}"
         errors = len(validate["errors"])
+        warnings = len(entry.get("warnings", []))
         unresolved = entry["link"]["unresolved"]
         lines.append(
             f"| {entry['repo']} | {entry['status']} | "
             f"{validate['requirements_total']} | {validate['requirements_covered']} | "
-            f"{coverage} | {errors} | {unresolved} |"
+            f"{coverage} | {errors} | {warnings} | {unresolved} |"
         )
+
+    lines.extend(["", "## Warnings"])
+    warning_lines = []
+    for entry in aggregate["results"]:
+        repo = entry.get("repo", "")
+        for warning in entry.get("warnings", []):
+            warning_lines.append(f"- {repo}: {warning}")
+    if warning_lines:
+        lines.extend(warning_lines)
+    else:
+        lines.append("- None")
+
+    combined_dir = out_dir / "combined"
+    combined_dir.mkdir(parents=True, exist_ok=True)
+    for entry in aggregate["results"]:
+        if entry.get("status") in ("skipped", "missing"):
+            continue
+        repo_rel = entry.get("repo_rel") or Path(entry["repo"]).name
+        repo_label = repo_rel if repo_rel not in (".", "") else "root"
+        repo_path = Path(entry["repo"])
+        source_files = entry.get("files", {}).get("source_files", [])
+        generated_files = entry.get("files", {}).get("generated_files", [])
+        source_dest = combined_dir / repo_label / "source"
+        generated_dest = combined_dir / repo_label / "generated"
+        source_dest.mkdir(parents=True, exist_ok=True)
+        generated_dest.mkdir(parents=True, exist_ok=True)
+
+        for rel in source_files:
+            src = repo_path / rel
+            dest = source_dest / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if src.exists():
+                shutil.copy2(src, dest)
+
+        for rel in generated_files:
+            src = repo_path / rel
+            dest = generated_dest / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if src.exists():
+                shutil.copy2(src, dest)
 
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     json_path.write_text(json.dumps(aggregate, indent=2), encoding="utf-8")
@@ -578,61 +747,8 @@ def init_traceability(config: TraceConfig) -> dict:
         path.write_text(content, encoding="utf-8")
         created.append(path)
 
-    ensure_file(
-        config.requirements,
-        "\n".join(
-            [
-                "# Requirements",
-                "",
-                "REQ-EXAMPLE-1: Example requirement description.",
-                "",
-            ]
-        ),
-    )
-    ensure_file(
-        config.risk_controls,
-        "\n".join(
-            [
-                "# Risk Controls",
-                "",
-                "RC-EXAMPLE-1: Example risk control description.",
-                "",
-            ]
-        ),
-    )
-    ensure_file(
-        config.matrix,
-        "\n".join(
-            [
-                "RequirementID,RiskControlID,TestID,TestLocation,Notes",
-                "REQ-EXAMPLE-1,RC-EXAMPLE-1,example_test,,TODO: add test coverage",
-                "",
-            ]
-        ),
-    )
-    ensure_file(
-        config.iec62304_mapping,
-        "\n".join(
-            [
-                "RequirementID,SoftwareItem,IntegrationSystemTest,Evidence",
-                "REQ-EXAMPLE-1,Example Module,verify_reliability.py,Test logs",
-                "",
-            ]
-        ),
-    )
-    ensure_file(
-        config.trace_dir / "soup_inventory.md",
-        "\n".join(
-            [
-                "# SOUP Inventory",
-                "| SOUP ID | Component | Version | Source | Function | Safety Impact | "
-                "Rationale | Controls | Evidence |",
-                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
-                "| SOUP-001 | Example Component | | | | | | | |",
-                "",
-            ]
-        ),
-    )
+    for path, content in traceability_templates(config).items():
+        ensure_file(path, content)
 
     return {
         "trace_dir": str(config.trace_dir),

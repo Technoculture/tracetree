@@ -23,6 +23,7 @@ tracetree aggregate
 - `docs/traceability/traceability_matrix.csv`
 - `docs/traceability/soup_inventory.md`
 - `docs/traceability/iec62304_mapping.csv`
+- `docs/traceability/verification_plan.md`
 
 If you do not already have these files, run:
 ```bash
@@ -84,4 +85,6 @@ TRACEABILITY_REQ_COVERAGE=0.95 tracetree validate
 ## Submodule Rollup
 `tracetree aggregate` reads `.gitmodules` and validates each submodule that contains
 traceability files. Results are written to:
-`docs/traceability/aggregate/traceability_rollup.md`.
+`docs/traceability/generated/aggregate/traceability_rollup.md`.
+Combined source + generated files are copied to:
+`docs/traceability/generated/aggregate/combined/`.
