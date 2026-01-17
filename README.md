@@ -22,6 +22,7 @@ tracetree aggregate
 - `docs/traceability/risk_controls.md`
 - `docs/traceability/traceability_matrix.csv`
 - `docs/traceability/soup_inventory.md`
+- `docs/traceability/iec62304_mapping.csv`
 
 If you do not already have these files, run:
 ```bash
@@ -35,6 +36,7 @@ Generated reports (default):
 - `docs/traceability/generated/testid_links.json`
 - `docs/traceability/generated/aggregate/traceability_rollup.md`
 - `docs/traceability/generated/aggregate/traceability_rollup.json`
+- `docs/traceability/generated/iec62304_traceability_table.md`
 
 Test discovery defaults:
 - GTest: `tests/`, `test/`
@@ -48,6 +50,12 @@ TestID matching:
 - JS/TS: string in `test("name", ...)` or `it("name", ...)` (also `Deno.test("name", ...)`)
 - Rust: function name following `#[test]`
 
+IEC 62304 mapping file format (`iec62304_mapping.csv`):
+```
+RequirementID,SoftwareItem,IntegrationSystemTest,Evidence
+REQ-EXAMPLE-1,Example Module,verify_reliability.py,Test logs
+```
+
 ## Repo Configuration
 Create `.traceability/config.json` to override defaults:
 ```json
@@ -57,6 +65,7 @@ Create `.traceability/config.json` to override defaults:
   "requirements_file": "requirements.md",
   "risk_controls_file": "risk_controls.md",
   "matrix_file": "traceability_matrix.csv",
+  "iec62304_mapping_file": "iec62304_mapping.csv",
   "gtest_roots": ["tests"],
   "pytest_roots": ["bindings/python/tests"],
   "js_roots": ["packages/web/tests"],

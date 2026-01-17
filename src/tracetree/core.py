@@ -25,6 +25,7 @@ class TraceConfig:
     requirements: Path
     risk_controls: Path
     matrix: Path
+    iec62304_mapping: Path
     gtest_roots: list[Path]
     pytest_roots: list[Path]
     js_roots: list[Path]
@@ -57,6 +58,9 @@ def load_config(repo_root: Path) -> TraceConfig:
     requirements = resolve_trace_path("requirements_file", "requirements.md")
     risk_controls = resolve_trace_path("risk_controls_file", "risk_controls.md")
     matrix = resolve_trace_path("matrix_file", "traceability_matrix.csv")
+    iec62304_mapping = resolve_trace_path(
+        "iec62304_mapping_file", "iec62304_mapping.csv"
+    )
 
     gtest_roots = [repo_root / p for p in config.get("gtest_roots", ["tests", "test"])]
     pytest_roots = [
@@ -77,6 +81,7 @@ def load_config(repo_root: Path) -> TraceConfig:
         requirements=requirements,
         risk_controls=risk_controls,
         matrix=matrix,
+        iec62304_mapping=iec62304_mapping,
         gtest_roots=gtest_roots,
         pytest_roots=pytest_roots,
         js_roots=js_roots,
@@ -106,6 +111,20 @@ def parse_matrix(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def parse_mapping(path: Path) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        return {}
+    mapping: dict[str, dict[str, str]] = {}
+    with path.open(newline="", encoding="utf-8", errors="ignore") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            key = (row.get("RequirementID") or "").strip()
+            if not key:
+                continue
+            mapping[key] = {k: (v or "").strip() for k, v in row.items()}
+    return mapping
+
+
 def read_text_lines(path: Path) -> list[str]:
     try:
         return path.read_text(encoding="utf-8").splitlines()
@@ -130,6 +149,9 @@ def validate_repo(config: TraceConfig, coverage_threshold: float) -> dict:
     requirements = load_ids(config.requirements, REQ_RE)
     risk_controls = load_ids(config.risk_controls, RC_RE)
     matrix_rows = parse_matrix(config.matrix)
+
+    if not config.iec62304_mapping.exists():
+        errors.append(f"Missing {config.iec62304_mapping}")
 
     if not requirements:
         errors.append(f"No requirements found in {config.requirements}")
@@ -414,6 +436,40 @@ def write_link_report(config: TraceConfig, report: dict) -> None:
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
 
+def write_iec62304_report(config: TraceConfig) -> None:
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    md_path = config.output_dir / "iec62304_traceability_table.md"
+
+    rows = parse_matrix(config.matrix)
+    mapping = parse_mapping(config.iec62304_mapping)
+
+    lines = [
+        "# IEC 62304 Traceability",
+        "",
+        "| Software Item | Requirement ID | Unit Test | Integration/System Test | "
+        "Risk Control | Evidence |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+
+    if not rows:
+        lines.append("| | | | | | |")
+    else:
+        for row in rows:
+            req_id = row.get("RequirementID", "")
+            rc_id = row.get("RiskControlID", "")
+            test_id = row.get("TestID", "")
+            meta = mapping.get(req_id, {})
+            software_item = meta.get("SoftwareItem", "")
+            integration_test = meta.get("IntegrationSystemTest", "")
+            evidence = meta.get("Evidence", "")
+            lines.append(
+                f"| {software_item} | {req_id} | {test_id} | "
+                f"{integration_test} | {rc_id} | {evidence} |"
+            )
+
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def find_submodules(repo_root: Path) -> list[Path]:
     gitmodules = repo_root / ".gitmodules"
     if not gitmodules.exists():
@@ -451,6 +507,7 @@ def aggregate_reports(repo_root: Path, coverage_threshold: float) -> dict:
         link_report = link_test_ids(config)
         write_validate_report(config, validate_report)
         write_link_report(config, link_report)
+        write_iec62304_report(config)
 
         status = "ok" if not validate_report["errors"] else "failed"
         results.append(
@@ -549,6 +606,16 @@ def init_traceability(config: TraceConfig) -> dict:
             [
                 "RequirementID,RiskControlID,TestID,TestLocation,Notes",
                 "REQ-EXAMPLE-1,RC-EXAMPLE-1,example_test,,TODO: add test coverage",
+                "",
+            ]
+        ),
+    )
+    ensure_file(
+        config.iec62304_mapping,
+        "\n".join(
+            [
+                "RequirementID,SoftwareItem,IntegrationSystemTest,Evidence",
+                "REQ-EXAMPLE-1,Example Module,verify_reliability.py,Test logs",
                 "",
             ]
         ),

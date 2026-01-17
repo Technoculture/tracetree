@@ -4,13 +4,14 @@ import argparse
 import os
 from pathlib import Path
 
-from .core import (
+from tracetree.core import (
     aggregate_reports,
     init_traceability,
     link_test_ids,
     load_config,
     validate_repo,
     write_aggregate_report,
+    write_iec62304_report,
     write_link_report,
     write_validate_report,
 )
@@ -21,6 +22,7 @@ def run_validate(args: argparse.Namespace) -> int:
     config = load_config(repo_root)
     report = validate_repo(config, args.coverage_threshold)
     write_validate_report(config, report)
+    write_iec62304_report(config)
     if report["errors"]:
         print("Traceability validation failed.")
         for err in report["errors"]:
