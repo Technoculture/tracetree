@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tracetree"
-version = "0.1.5"
+version = "0.1.6"
 description = "Universal traceability validation and rollup for requirements-to-tests mapping."
 readme = "README.md"
 requires-python = ">=3.9"

@@ -42,13 +42,13 @@ Generated reports (default):
 Test discovery defaults:
 - GTest: `tests/`, `test/`
 - Pytest: `tests/`, `test/`
-- JS/TS (Jest/Mocha/Vitest/Deno): `tests/`, `test/`, `__tests__/`, `spec/`
+- JS/TS (Jest/Mocha/Vitest): `tests/`, `test/`, `__tests__/`, `spec/`
 - Rust (`#[test]`): `tests/`, `test/`, `src/`
 
 TestID matching:
 - GTest: `SuiteName.TestName`
 - Pytest: `test_function_name`
-- JS/TS: string in `test("name", ...)` or `it("name", ...)` (also `Deno.test("name", ...)`)
+- JS/TS: string in `test("name", ...)` or `it("name", ...)`
 - Rust: function name following `#[test]`
 
 IEC 62304 mapping file format (`iec62304_mapping.csv`):

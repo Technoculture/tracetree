@@ -371,7 +371,7 @@ def index_js_tests(config: TraceConfig) -> dict[str, tuple[str, int]]:
                 continue
             rel = str(path.relative_to(config.repo_root))
             for idx, line in enumerate(read_text_lines(path), 1):
-                match = JS_TEST_RE.search(line) or DENO_TEST_RE.search(line)
+                match = JS_TEST_RE.search(line)
                 if match:
                     name = match.group(2)
                     index.setdefault(name, (rel, idx))
